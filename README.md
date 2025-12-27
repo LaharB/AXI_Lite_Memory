@@ -1,29 +1,261 @@
-# UVM_Verification_of_Combinational_Adder
-This repo shows the verification of a 4-bit combinational adder using Universal Verification Methodology(UVM)
+# Verification_of_AXI_Lite_Memory
+This repo shows the verification of a AXI_Lite Memory where the design is acting as axi_slave and testbench is acting as axi_master.
 
 ## Code
 
 <details><summary>RTL/Design Code</summary>
 
 ```systemverilog
-///////DUT + Interface 
-module add(
-  input [3:0]a,b,
-  output [4:0]y
+//design code is the axi_slave and tb code will act like axi_master
+module axiLite_slave(
+    input s_axi_aclk,
+    input s_axi_aresetn, //active low reset 
+    
+    //Address Write Channel(AW) - for writing address 
+    //valid signal is always given by Sender, ready signal is always given by Receiver
+    input s_axi_awvalid, //M to S (from sender to receiver)
+    output reg s_axi_awready, //S to M
+    input [31:0] s_axi_awaddr,  //M to S    //32-bit address size
+
+    //Write Data Channel(W) - for writing data 
+    input s_axi_wvalid, //M to S
+    output reg s_axi_wready, //S to M
+    input [31:0] s_axi_wdata, //32-bit data size
+
+    //Write Response channel(B)- for response of write transaction
+    output reg s_axi_bvalid, //S to M
+    input s_axi_bready, //M to S
+    output reg [1:0] s_axi_bresp, //S to M 00 - Okay , 11 - Decode error
+
+    //Address Read channel(AR) - for reading from address
+    input s_axi_arvalid, //M to S
+    output reg s_axi_arready, //S to M
+    input [31:0] s_axi_araddr, //M to S 32-bit address size
+    
+    //Read Data Channel(R) - for reading data from that address sent by M to S
+    output reg s_axi_rvalid, //S to M
+    input s_axi_rready, //M to S
+    output reg [31:0] s_axi_rdata, //S to M 32 bit data from the address sent by M to S
+    output reg [1:0] s_axi_rresp //S to M  00 - Okay , 11 - Decode Error
 );
-  
-assign y = a + b;
-  
+
+localparam idle = 0, //store the awaddr 
+           send_waddr_ack = 1,//, make s_axi_awvalid high and get awready from slave
+           send_raddr_ack = 2,//store the raddr, make s-axi_rvalid high and also get rready from slave
+           send_wdata_ack = 3, //store the data, make s-axi_rvalid high and get the rready from slave
+           update_mem = 4, //update the 32-bit x 128 memory
+           send_wr_err = 5,
+           send_wr_resp = 6, //response by slave
+           gen_data = 7, //check addr value < 128 
+           send_rd_err = 8,
+           send_rd_resp = 9; //response by slave 
+
+reg [3:0] state = idle;  //4-bits as states from 0 to 9
+reg [3:0] next_state = idle;
+reg [1:0] count = 0; //var used to wait for 2 clk ticks
+reg [31:0] waddr, raddr, wdata, rdata; //32-bit temp reg to store info
+
+reg [31:0] mem[128]; //slave memeory
+
+always@(posedge s_axi_aclk)
+begin
+    if(s_axi_aresetn == 1'b0) 
+    begin
+        state <= idle;
+        //intialize the memory
+        for(int i = 0; i <128; i++)
+        begin
+            mem[i] <= 0;
+        end 
+        //make some control signals zero
+        s_axi_awready <= 0;
+
+        s_axi_wready <= 0;
+
+        s_axi_bvalid <= 0;
+        s_axi_bresp <= 0;
+
+        s_axi_arready <= 0;
+
+        s_axi_rvalid <= 0;
+        s_axi_rdata <= 0;
+        s_axi_rresp <= 0;
+
+        //make temp regsiters zero
+        waddr <= 0;
+        raddr <= 0;
+        wdata <= 0;
+        rdata <= 0;
+    end
+
+    else
+    begin
+        case(state)
+
+        idle:
+        begin
+            s_axi_awready <= 0;
+            s_axi_wready <= 0;
+            s_axi_bvalid <= 0;
+            s_axi_bresp <= 0;
+            s_axi_arready <= 0;
+            s_axi_rvalid <= 0;
+            s_axi_rdata <= 0;
+            s_axi_rresp <= 0;
+            s_axi_rvalid <= 0;
+            
+            waddr <= 0;
+            raddr <= 0;
+            wdata <= 0;
+            rdata <= 9;
+            count <= 0;
+            
+        if(s_axi_awvalid == 1'b1)  //write operation , M to S
+            begin
+                state <= send_waddr_ack;
+//as soon as s_axi_awvalid is high, we make axi_awready high and handshake happens and data transfer happens 
+                s_axi_awready <= 1'b1;  // S to M , make awready 1 
+                waddr <= s_axi_awaddr;  //store the write address in temp reg from s_axi_awaddr line
+            end     
+        else if(s_axi_arvalid == 1'b1)  //read operation
+            begin
+                state <= send_raddr_ack;
+                s_axi_arready <= 1'b1;  //S to M, make arready 1 as soon as arvalid = 1
+                raddr <= s_axi_araddr; //store the read address in temp reg
+            end
+        else 
+            begin
+                state <= idle;
+            end
+        end
+
+        //write operation 
+        /////////////////////////////////////////////////////////////////
+        send_waddr_ack:
+        begin
+            s_axi_awready <= 1'b0; //make awready 0
+            if(s_axi_wvalid) //M to S, storing awdata into wdata temp reg
+                begin
+                wdata <= s_axi_wdata; //store data in the temp reg
+                s_axi_wready <= 1'b1; //make awready = 1 for handshake
+                state <= send_wdata_ack;     
+                end
+            else 
+                begin
+                    state <= send_waddr_ack;
+                end
+
+        end
+
+        send_wdata_ack:
+        begin
+            s_axi_wready <= 1'b0; //make wready 0
+            if(waddr < 128)  //check address range 
+                begin
+                    state <= update_mem;
+                    mem[waddr] <= wdata; 
+                end
+            else
+                begin
+                    state <= send_wr_err;
+                    s_axi_bresp <= 2'b11; //error response
+                    s_axi_bvalid <= 1'b1;
+                end
+
+        end
+
+        update_mem:
+        begin
+            mem[waddr] <= wdata;
+            state <= send_wr_resp;
+        end
+
+        send_wr_resp:
+        begin
+            s_axi_bresp <= 2'b00; //00 Okay Response
+            s_axi_bvalid <= 1'b1; //S to M
+            if(s_axi_bready) //M to S , waiting for bready from master
+                begin        
+                    state <= idle;
+                end
+            else
+                begin
+                    state <= send_wr_resp;            
+                end
+            
+        end
+
+        send_wr_err:
+        begin
+            if(s_axi_bready) //M to S, , waiting for bready from master
+                begin
+                   state <= idle; 
+                end
+            else 
+                begin
+                    state <= send_wr_err; //stay in send_wr_err
+                end
+            
+        end
+
+        //////////////////////////////////////////////////////////////////
+
+        //read operation
+        //////////////////////////////////////////////////////////////////
+        send_raddr_ack:
+        begin
+            s_axi_arready <= 0; //make it 0 as already made 1 when arvalid was 1
+            if(raddr < 128)
+                state <= gen_data;
+            else
+                begin
+                    s_axi_rvalid <= 1'b1;  //S to M
+                    state <= send_rd_err;
+                    s_axi_rdata <= 0;
+                    s_axi_rresp <= 2'b11;  //error response
+                end
+        end
+
+        gen_data: 
+        begin
+            if(count < 2)
+                begin
+                    rdata <= mem[raddr];  //put the data in temp reg and wait for 2 clk ticks 
+                    state <= gen_data;
+                    count <= count + 1;
+                end
+            else
+            //wait for master response now
+                begin
+                    s_axi_rvalid <= 1'b1;  //S to M
+                    s_axi_rdata <= rdata;
+                    s_axi_rresp <= 2'b00; //No error
+                    if(s_axi_rready)  //M to S
+                        state <= idle; //go back to idle if s_axi_aready sent by M
+                    else
+                        state <= gen_data;
+                end
+        end
+
+        send_rd_err:
+        begin
+            if(s_axi_rready) //M to S
+                begin
+                    state <= idle;
+                end
+            else 
+                begin
+                    state <= send_rd_err;
+                end 
+        end
+        //////////////////////////////////////////////////////////////////
+        default : state <= idle;
+
+        endcase
+    end
+end
+
 endmodule
-
-/////////////////////////////////////////
-
-interface add_if();
-  logic [3:0]a;
-  logic [3:0]b;
-  logic [4:0]y;
-  
-endinterface
 ```
 </details>
 
@@ -33,279 +265,122 @@ __________________________________________________________
 
 ```systemverilog
 
+//tb acts as axiLite_master
 `timescale 1ns / 1ps
+module axiLite_tb;
 
-`include "uvm_macros.svh"
-import uvm_pkg::*;
+    reg tb_s_axi_aclk = 0;
+    reg tb_s_axi_aresetn = 0;
+    //AW
+    reg tb_s_axi_awvalid = 0;
+    wire tb_s_axi_awready;
+    reg [31:0] tb_s_axi_awaddr = 0;
 
-/////        TRANSACTION          //////
-class transaction extends uvm_sequence_item;  //dynamic component
+    //W
+    reg tb_s_axi_wvalid = 0;
+    wire tb_s_axi_wready;
+    reg [31:0] tb_s_axi_wdata = 0;
 
-  //data members
-  rand bit [3:0]a;
-  rand bit [3:0]b;
-  bit [4:0]y;
-   
-  function new(input string path = "transaction");   //1 arg\
-    super.new(path);
-  endfunction
-  
-  //register the data members with field macros to use automation
-  `uvm_object_utils_begin(transaction);
-  `uvm_field_int(a, UVM_DEFAULT);
-  `uvm_field_int(b, UVM_DEFAULT);
-  `uvm_field_int(y, UVM_DEFAULT);
-  `uvm_object_utils_end
-  
-endclass
-////////////////////////////////////////////////////////////////////
-//////sequence but we are naming it as generator///////////////
-//////////  GENERATOR /////////////
-class generator extends uvm_sequence #(transaction); //dynamic component 
-  `uvm_object_utils(generator)
- 
-  transaction trans;
-    
-    function new(input string path = "generator"); //dynamic component 
-    super.new(path);
-  endfunction
-  
-  //task to randomize 
-  virtual task body();
-   //make trans object
-    trans = transaction::type_id::create("trans");  //1 arg for create() as dynamic component 
-    repeat(10)begin
-      start_item(trans);
-      trans.randomize();
-      `uvm_info("SEQ", $sformatf("Data sent to driver a: %0d, b: %0d",trans.a, trans.b), UVM_NONE);
-      finish_item(trans);
-    end  
-  endtask
-  
-endclass
-//////////////////////////////////////////////////////////////////////////
-//we dont need any separate class for sequencer, go for driver directly
-/////   DRIVER   /////
-class driver extends uvm_driver #(transaction); //static component   
- `uvm_component_utils(driver)
-  
-  function new(input string path = "driver", uvm_component parent = null); //2 args as static component
-    super.new(path, parent);
-  endfunction
-  
-  transaction tc; //a transaction container tc to hold what we receive from sequence
-  virtual add_if aif; //interface handle to give driver access to driver
-  
-  //build_phase 
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    tc = transaction::type_id::create("tc", this);
-    
-    //confid_db & get to give driver access to the interface 
-    if(!uvm_config_db#(virtual add_if)::get(this,"","aif", aif))
-     `uvm_error("DRV", "Unable to access uvm_config_db");
-    endfunction
-  
-    //task to communicate between driver and sequencer
-  virtual task run_phase(uvm_phase phase);
-    //using a forever block so that driver is always ready for getting trans
-    forever begin
-      seq_item_port.get_next_item(tc); //gets the trans packet that is kept ready by generator(sequence)
-      
-      //apply them to the DUT through the interface 
-      aif.a <= tc.a;
-      aif.b <= tc.b;
-      `uvm_info("DRV", $sformatf("Trigger DUT a: %0d, b: %0d", tc.a, tc.b), UVM_NONE);
-      seq_item_port.item_done();
-      #10;  //wait for 10 secs so that the inputs have enought ime to be applied to the DUT
+    //B
+    wire tb_s_axi_bvalid;
+    reg tb_s_axi_bready = 0;
+    wire [1:0] tb_s_axi_bresp;
+
+    //AR
+    reg tb_s_axi_arvalid = 0;
+    wire tb_s_axi_arready;
+    reg [31:0] tb_s_axi_araddr = 0;
+
+    //R
+    wire tb_s_axi_rvalid;
+    reg tb_s_axi_rready = 0;
+    wire [31:0] tb_s_axi_rdata;
+    wire [1:0] tb_s_axi_rresp;
+
+    //connect to DUT
+    axiLite_slave DUT (
+        .s_axi_aclk(tb_s_axi_aclk),
+        .s_axi_aresetn(tb_s_axi_aresetn),
+        //AW
+        .s_axi_awvalid(tb_s_axi_awvalid),
+        .s_axi_awready(tb_s_axi_awready),
+        .s_axi_awaddr(tb_s_axi_awaddr),
+        //W
+        .s_axi_wvalid(tb_s_axi_wvalid),
+        .s_axi_wready(tb_s_axi_wready),
+        .s_axi_wdata(tb_s_axi_wdata),
+        //B 
+        .s_axi_bvalid(tb_s_axi_bvalid),
+        .s_axi_bready(tb_s_axi_bready),
+        .s_axi_bresp(tb_s_axi_bresp),
+        //AR
+        .s_axi_arvalid(tb_s_axi_arvalid),
+        .s_axi_arready(tb_s_axi_arready),
+        .s_axi_araddr(tb_s_axi_araddr),
+        //R
+        .s_axi_rvalid(tb_s_axi_rvalid),
+        .s_axi_rready(tb_s_axi_rready),
+        .s_axi_rdata(tb_s_axi_rdata),
+        .s_axi_rresp(tb_s_axi_rresp)
+
+    );
+
+    //clk generation
+    always #5 tb_s_axi_aclk = ~tb_s_axi_aclk; //100 Mhz 
+
+    //stimulus
+    initial begin
+        //reset
+        tb_s_axi_aresetn = 0;  //assert reset
+        //reset the DUT for 5 clk ticks
+        repeat(5) @(posedge tb_s_axi_aclk);
+        tb_s_axi_aresetn = 1; //deassert reset
+
+        //write transaction
+        //write address
+        repeat(2) @(posedge tb_s_axi_aclk); //wait for 2 clk ticks 
+        tb_s_axi_awvalid = 1; //M to S
+        tb_s_axi_awaddr = 32'h00000005;
+        //wait for slave ready
+        @(negedge tb_s_axi_awready); //wait for slave to receive it 
+        tb_s_axi_awvalid = 0; //make valid from M 0 as handshake is done 
+
+        //write data
+        repeat(2) @(posedge tb_s_axi_aclk); //again wait for 2 clk ticks
+        tb_s_axi_wvalid = 1; //M to S
+        tb_s_axi_wdata = 32'hC0DECAFE; 
+        //wait for slave ready
+        @(negedge tb_s_axi_wready); //wait for slave to receive it 
+        tb_s_axi_wvalid = 0; //make wvalid from M 0 as handshake done
+
+        //write response
+        repeat(2) @(posedge tb_s_axi_aclk); //again wait for 2 clk ticks
+        //S wait for M to give bready
+        tb_s_axi_bready = 1; //M to S
+        @(negedge tb_s_axi_bvalid); //wait for slave to send response 
+        tb_s_axi_bready = 0; //make bready from M 0 as resp handshake also done
+
+        //read transaction
+        //address read
+        repeat(2) @(posedge tb_s_axi_aclk); //wait for 2 clk ticks
+        tb_s_axi_arvalid = 1; //M to S
+        tb_s_axi_araddr = 32'h00000005; //read from the same address
+        //wait for slave arready
+        @(negedge tb_s_axi_arready); //wait for slave to receive it  
+        tb_s_axi_arvalid = 0; //make arvalif from M 0 as handshake done
+
+        //data read 
+        @(posedge tb_s_axi_aclk); //again wait for 1 clk tick
+        //S wait for M to give rready 
+        tb_s_axi_rready = 1;
+        @(negedge tb_s_axi_rvalid); //wait for slave to send response 
+        tb_s_axi_rready = 0; //make rready from M 0 as handshake done
+
+        //end of test
+        #100;
+        $stop;
     end
-  endtask
-  
-endclass
-/////////////////////////////////////////////////////////////////////////////////
-///////    MONITOR   ///////////
-class monitor extends uvm_monitor;    //static component - uvm_component
- `uvm_component_utils(monitor)
-  
-  //uvm_analysis port to send data captured from interface to scoreboard
-  uvm_analysis_port #(transaction) send;
-  
-  function new(input string path = "monitor", uvm_component parent = null);
-    super.new(path, parent);  //2 args 
-    //also construct the port "send" inside new() itself 
-    send = new("send", this);
-  endfunction
-  
-  transaction t;
-  virtual add_if aif;
-  
-  //build_phase
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    t = transaction::type_id::create("t"); //1 arg for create() as belongs uvm_object
-    
-    //config_db and get method to give monitor access to interface 
-    if(!uvm_config_db #(virtual add_if)::get(this,"","aif", aif))
-      `uvm_error("MON", "Unable to access uvm_config_db");
-  endfunction
-  
-  //task run_phase to pass data and response from interface to monitor
-  virtual task run_phase(uvm_phase phase);
-    forever begin
-      #10;   //wait for #10 more so that driver gets enough time to send the data to the interface and then start passing that data and response to the monitor 
-     t.a = aif.a;
-     t.b = aif.b;
-     t.y = aif.y;
-     `uvm_info("MON", $sformatf("Data Sent to Scoreboard a: %0d, b: %0d, y: %0d",t.a, t.b, t.y), UVM_NONE);
-      //send method 
-      send.write(t);  // send transaction t to scoreboard
-    end
-  endtask
-    
-endclass
-////////////////////////////////////////////////////////////////////////////////
-///////////   SCOREBOARD    //////////////////////////////////
-class scoreboard extends uvm_scoreboard;
- `uvm_component_utils(scoreboard)
-  
-  //uvm_analysis implementation to get the data from monitor
-  uvm_analysis_imp #(transaction, scoreboard) recv; 
-   
-  transaction tr; //transaction container 
-  
-  function new(input string path = "scoreboard", uvm_component parent = null);
-    super.new(path, parent);
-    //construct the recv port inside new() itself
-    recv = new("recv", this);
-  endfunction
 
-  //build_phase
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    tr = transaction::type_id::create("tr"); //1 arg as belongs to uvm_object
-  endfunction
-  
-  //function write to get data from monitor
-  virtual function void write(transaction t);
-    tr = t;   //we are what we get from monitor in t to the container tr in scorebaord
-    `uvm_info("SCO", $sformatf("Data rcvd from Monitor a: %0d, b: %0d, y: %0d", tr.a, tr.b, tr.y), UVM_NONE);
-    
-    //check data and response using own logic
-    if(tr.y == tr.a + tr.b)
-      `uvm_info("SCO", "Test Passed", UVM_NONE)
-    else 
-      `uvm_info("SCO", "Test Failed", UVM_NONE);
-  endfunction     
-  
-endclass
-////////////////////////////////////////////////////////////////////////////////
-///////  AGENT ////////////////
-class agent extends uvm_agent;
- `uvm_component_utils(agent)
-  
-  function new(input string path = "agent", uvm_component parent = null);
-    super.new(path, parent);
-  endfunction
-  
-  //agent contains sequencer, driver and monitor 
-  uvm_sequencer#(transaction) seqr;
-  driver d;
-  monitor m;
-  
-  //build_phase 
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    //2 args as belongs to uvm_component for the below 
-    seqr = uvm_sequencer#(transaction)::type_id::create("seqr", this);
-    d = driver::type_id::create("d", this);
-    m = monitor::type_id::create("m", this);
-  endfunction
-  
-  //connect phase to connect the sequencer with driver inside agent 
-  virtual function void connect_phase(uvm_phase phase);
-    super.connect_phase(phase);
-    d.seq_item_port.connect(seqr.seq_item_export); //connected them
-  endfunction
-
-endclass
-/////////////////////////////////////////////////////////////////////////////////
-////////   ENVIRONMENT /////////////
-class env extends uvm_env;
- `uvm_component_utils(env)
-  
-  //env contains agent and scoreboard
-  agent a;
-  scoreboard s;
-    
-  function new(input string path = "env", uvm_component parent = null);
-    super.new(path, parent);  
-  endfunction
-  
-  //build_phase
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    a = agent::type_id::create("a", this);
-    s = scoreboard::type_id::create("e", this);
-  endfunction
-  
-  //connect phase to connect scoreboard and monitor inside env
-  virtual function void connect_phase(uvm_phase phase);
-    super.connect_phase(phase);
-    a.m.send.connect(s.recv);  //connected monitor with scoreboard
-  endfunction
-  
-endclass
-////////////////////////////////////////////////////////////////////////////
-///////   TEST //////////////
-class test extends uvm_test;
-  `uvm_component_utils(test)
- 
-  function new(input string path = "test", uvm_component parent = null);
-    super.new(path, parent);
-  endfunction
-  
-  //env is inside test
-  env e;
-  generator gen; //or sequence seq if we named our class "sequence" instead of "generator"
-  
-  //build_phase 
-  virtual function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    e = env::type_id::create("e", this);
-    gen = generator::type_id::create("gen");
-  endfunction
-  
-  //task run_phase to start the sequence
-  virtual task run_phase(uvm_phase phase);
-    //to hold the simulator
-    phase.raise_objection(this);
-    gen.start(e.a.seqr);  //seq.start(e.a.seqr);
-    #50;
-    phase.drop_objection(this);
-  endtask
-
-endclass
-/////////////////////////////////////////////////////////////////////////////////
-//////// TESTBENCH_TOP //////////////
-module tb;
-  
-//inside tb , we have interface , DUT and test class
-  add_if aif();  //have to add parenthesis for interface instance
-  add dut(.a(aif.a), .b(aif.b), .y(aif.y));   //connections between DUT and test class through interface 
-  
-  //we dont need to make a seperate object for test unlike SV, we directly use run_test
-  initial begin
-   //config_db and set method to give access of the interface to driver and monitor 
-    uvm_config_db #(virtual add_if)::set(null, "uvm_test_top.e.a*", "aif", aif);
-    run_test("test");
-  end
-  
-  //to see waveform
-  initial begin
-    $dumpfile("dump.vcd");
-    $dumpvars;
-  end 
-  
 endmodule
 ```
 </details>
@@ -314,16 +389,9 @@ __________________________________________________________
 
 <details><summary>Simulation</summary><br>
 
-![alt text](<Sim/UVM Based Combinational Adder P1.png>)
-![alt text](<Sim/UVM Based Combinational Adder P2.png>)
-![alt text](<Sim/UVM Based Combinational Adder P3.png>)
+![alt text](<sim/AXI_Lite_mem 1 all channel.png>)
+![alt text](<sim/AXI_Lite_mem 6 Slave Memory update.png>)
 
 </details>
 
 __________________________________________________________
-
-<details><summary>Waveform</summary><br>
-
-![alt text](<Sim/UVM Based Combinational Adder Waveform.png>)
-
-</details>
