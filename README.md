@@ -1,5 +1,6 @@
 # Verification_of_AXI_Lite_Memory
 This repo shows the verification of a AXI_Lite Memory where the design is acting as axi_slave and testbench is acting as axi_master.
+The design does not implement burst transfer or wstrb signals.
 
 The AXI_lite memory is designed and simulated using AMD Vivado 2025.1 tool.
 
