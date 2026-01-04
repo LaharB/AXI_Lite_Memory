@@ -756,9 +756,11 @@ ____________________________________________________________________________
 
 <details><summary>Simulation</summary><br>
 
-Handshakes happening in the different channels
+### Handshakes happening in the different channels
+
 ![alt text](<sim/AXI_Lite_mem 1 all channel.png>)
-Memory getting updated according to AXI protocol 
+
+### Memory getting updated according to AXI protocol 
 ![alt text](<sim/AXI_Lite_mem 6 Slave Memory update.png>)
 
 </details>
