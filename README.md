@@ -7,8 +7,6 @@ The AXI_lite memory is designed and simulated using AMD Vivado 2025.1 tool.
 
 <details><summary>RTL/Design Code</summary>
 
-## Verilog Based Testbench Approach
-
 ```systemverilog
 //design code is the axi_slave and tb code will act like axi_master
 module axiLite_slave(
@@ -267,6 +265,8 @@ __________________________________________________________
 
 <details><summary>Testbench Code</summary>
 
+### Verilog Based Testbench
+
 ```systemverilog
 
 //tb acts as axiLite_master
@@ -387,7 +387,6 @@ module axiLite_tb;
 
 endmodule
 ```
-</details>
 
 ## SV Layered Tesebench
 
@@ -644,10 +643,6 @@ $display("---------------------------------------------------------------------"
             end
     endtask
 endclass
-
-
-
-
 //////////////////////////////////////////////////////////////////////////////
 // `include "interface.sv"
 // `include "transaction.sv"
@@ -754,11 +749,16 @@ module tb_top;
 
 endmodule
 ```
-__________________________________________________________
+</details>
+
+____________________________________________________________________________
+
 
 <details><summary>Simulation</summary><br>
 
+Handshakes happening in the different channels
 ![alt text](<sim/AXI_Lite_mem 1 all channel.png>)
+Memory getting updated according to AXI protocol 
 ![alt text](<sim/AXI_Lite_mem 6 Slave Memory update.png>)
 
 </details>
