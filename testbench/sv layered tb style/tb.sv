@@ -1,3 +1,8 @@
+/*
+//this testbench contains all the classes together
+*/
+
+`timescale 1ns / 1ps 
 class transaction;
 
     randc bit op; //operation mode - op = 1(write) , 0(read)
@@ -250,7 +255,6 @@ endclass
 
 
 //////////////////////////////////////////////////////////////////////////////
-`timescale 1ns / 1ps 
 // `include "interface.sv"
 // `include "transaction.sv"
 // `include "generator.sv"
